@@ -1,0 +1,92 @@
+package com.baiduwaimai.hadoop.wordcount;
+
+import java.io.IOException;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.util.GenericOptionsParser;
+
+public class WordCount {
+	
+	/*
+	 * mapper函数意义就是读取每一个小文件中的数据，对数据中元素的值就行空格拆分之后将信息输出给reduce
+	 * 比如一个文件中内容为：hello world my friend
+	 * 我们就输出为 hello 1 world 1 my 1 friend 1 给reduce函数
+	 */
+	
+	// 书写map函数，继承自mapper，泛型为输入键值与输出键值
+	public static class Map extends Mapper<Object, Text, Text, IntWritable> {
+		// 静态数值一般编码中的数值尽量改成全局不可变类型的便于维护
+		private static final int one = 1;
+		// 重写map函数，context为上下文环境用于输出内容的写入
+		// Object键用处不大，values为每个map处理的datanode文件内容
+		public void map(Object key, Text values, Context context) throws IOException, InterruptedException {
+			String value = values.toString();// 将text类型转化为普通的string类型
+			String[] vals = value.split(" ");// 以空格作为分割
+			for (String s : vals) {
+				//将结果一键值的形式写到mapreduce框架中
+				context.write(new Text(s), new IntWritable(one));
+			}
+		}
+	}
+
+	/*
+	 * reduce函数就是讲map函数刚才输出出来的键值对进行统一，把具有相同键的元素放到一个迭代器中，
+	 * 之后对这个迭代器进行轮询对其值进行累加之后把结果输出到我们的hdfs中去
+	 */
+	
+	public static class Reduce extends Reducer<Text,IntWritable,Text,IntWritable>{
+		//重写reduce函数，此处已经把键相同的值给聚合在一起了,值是一个集合
+		public void reduce(Text key,Iterable<IntWritable> values,Context context)throws IOException, InterruptedException{
+			//最终输出的和
+			int sum = 0;
+			//轮询当前具有相同键的值对其进行累加
+			for(IntWritable v : values){
+				//因为使用的是Hadoop的适合序列化的包装类所以通过get函数来取一下值
+				sum += v.get();
+			}
+			//将结果输出到hdfs中
+			context.write(key, new IntWritable(sum));
+		}
+	}
+	/*
+	 * 主函数用于调度统一这两个map函数与reduce函数
+	 */
+	public static void main(String[] args) throws Exception{
+		//获取客户端或服务器配置
+		Configuration conf = new Configuration();
+		//通过genericOptionsParser普通操作分析器类，来分析参数获得其中的参数信息。
+		//能够精准的获取到命令行所传输过来的参数
+		String[] arg = new GenericOptionsParser(conf,args).getRemainingArgs();
+		//参数不足两个错误退出
+		if(arg.length != 2){
+			System.err.println("wrong param");
+			System.exit(2);
+		}
+		//创建job工作调度方法
+		Job job = new Job(conf, "word count");
+		//执行jar包时指定的执行类
+		job.setJarByClass(WordCount.class);
+		//指定使用的map类和reduce类
+		job.setMapperClass(Map.class);
+		//使用combiner函数减少网络传输带宽影响
+		job.setCombinerClass(Reduce.class);
+		job.setReducerClass(Reduce.class);
+		//输出的键和值的格式
+		job.setOutputKeyClass(Text.class);
+		job.setOutputValueClass(IntWritable.class);
+		//表明输入和输出的具体文件路径
+		FileInputFormat.addInputPath(job, new Path(arg[0]));
+		FileOutputFormat.setOutputPath(job, new Path(arg[1]));
+		//调用执行函数，true表示会显示整个的执行过程，并将返回值作为退出标示
+		System.exit(job.waitForCompletion(true) ? 0 : 1);
+	}
+	
+}
